@@ -501,16 +501,18 @@ Contoh buat jawaban singkat 1 baris, "replyLines" tetap array isi 1 item, misal:
     // Panggil lewat Netlify Function proxy (bukan langsung ke Groq) supaya
     // API key gak pernah ke-expose di browser. Lihat netlify/functions/groq-proxy.js
     // PENTING: model default (openai/gpt-oss-120b) itu TEXT-ONLY, gak bisa "lihat"
-    // gambar. Kirim flag "vision:true" + "model" pilihan kalau ada gambar terlampir
-    // — tapi groq-proxy.js WAJIB diupdate juga di sisi server biar dia mau nerima override
-    // "model" ini (kalau belum, proxy akan tetep pakai model default & abaikan gambar).
+    // gambar. Kirim "model" override + flag "vision:true" kalau ada gambar terlampir.
+    // Groq sering "pensiunin" model vision-nya (Llama 4 Scout/Maverick udah almarhum
+    // per pertengahan 2026) — kalau suatu saat error lagi "model does not exist",
+    // cek daftar model vision terbaru di console.groq.com/docs/vision dan ganti
+    // string model di bawah ini.
     const requestBody = {
       max_tokens:2000,
       system: systemPrompt,
       messages: messagesForApi
     };
     if (requestHasImage){
-      requestBody.model = "meta-llama/llama-4-scout-17b-16e-instruct"; // vision-capable di Groq
+      requestBody.model = "qwen/qwen3.6-27b"; // vision-capable di Groq (model Llama 4 Scout udah di-deprecate)
       requestBody.vision = true;
     }
     const response = await fetch("/.netlify/functions/groq-proxy", {
