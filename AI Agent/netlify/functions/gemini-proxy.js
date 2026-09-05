@@ -63,7 +63,14 @@ exports.handler = async function (event) {
   const geminiBody = {
     contents: contents,
     generationConfig: {
-      maxOutputTokens: max_tokens || 1000
+      maxOutputTokens: max_tokens || 1000,
+      // Gemini 3.6 Flash defaultnya "thinking" NYALA, dan token buat mikir itu
+      // ikut motong jatah maxOutputTokens yang sama (dihitung sebagai output).
+      // Buat proxy ini kita cuma butuh jawaban JSON ketat, bukan reasoning
+      // panjang — kalau dibiarin default, jawaban yang agak panjang (misal
+      // report banyak baris) bisa KEPOTONG di tengah karena token abis buat
+      // thinking duluan. Matiin biar semua jatah token dipake buat jawaban.
+      thinkingConfig: { thinkingBudget: 0 }
     }
   };
   if (system) {
