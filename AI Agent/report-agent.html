@@ -160,6 +160,7 @@
   <header>
     <div>
       <div class="title">The <span>Odyssey</span></div>
+      <div class="sub">Hallo saya Odyssey, tugas saya disini adalah untuk membantumu dalam melakukan Track Unit yang Late Arrival & Early Arrival serta menyiapkan Report secara langsung ke CL/PL</div>
     </div>
     <div class="sub" id="statusLine">mode: mock data</div>
   </header>
@@ -408,7 +409,7 @@ function addTyping(){
   const el = document.createElement("div");
   el.className = "msg agent";
   el.id = "typingIndicator";
-  el.innerHTML = '<div class="who">AI Agent</div><div class="typing-dots"><span></span><span></span><span></span></div>';
+  el.innerHTML = '<div class="who">Odyssey</div><div class="typing-dots"><span></span><span></span><span></span></div>';
   log.appendChild(el);
   log.scrollTop = log.scrollHeight;
 }
@@ -474,24 +475,34 @@ async function askAgent(question, imageDataUrl){
   const dataKeywords = /report|laporan|trip|late|telat|awal|early|unit|vendor|driver|status|hari ini|kemarin|tanggal|durasi|jadwal|\bsta\b|\beta\b|\bata\b|\bstd\b|\blt[\s-]?\d|nomor|plat|parcel|qty|data|dc\b|banjarmasin|sampit|kapuas|pangkalan/i;
   const isDataQuery = dataKeywords.test(question || "") || !!imageDataUrl;
 
-  const basePersona = `Kamu Odyssey, AI Agent buat Shift Lead Sortation Center yang mantau trip Inbound
-(Line Haul dari origin ke DC). Gaya ngomong santai kayak ngobrol sama rekan kerja sendiri (natural,
-boleh pakai "bro", boleh bercanda dikit, gak kaku/formal) — tapi tetep sopan.`;
+  const basePersona = `Kamu Odyssey — AI Agent yang awalnya dibikin buat bantu Shift Lead Sortation Center
+mantau trip Inbound (Line Haul dari origin ke DC), TAPI wawasan kamu gak kebatas itu doang. Kamu punya
+pengetahuan umum yang luas kayak asisten AI pada umumnya — bebas diajak diskusi, nanya hal umum, minta
+bantuan nulis/ngoding, brainstorming, atau apapun di luar topik dashboard. Gaya ngomong santai kayak
+ngobrol sama rekan kerja sendiri (natural, boleh pakai "bro", boleh bercanda dikit, gak kaku/formal) —
+tapi tetep sopan & jawabannya harus BENERAN membantu/akurat, jangan asal karena sok santai.`;
 
   const jsonFormatRule = `WAJIB balas HANYA dengan JSON valid, tanpa teks lain di luar JSON, tanpa markdown
 code fence, persis format ini:
 {"replyLines": ["baris pertama jawaban", "baris kedua kalau ada, dst — tiap item array = satu baris teks,
 JANGAN pernah taruh karakter enter/newline literal ATAU escape \\n di DALAM satu item, kalau butuh baris
-baru bikin item array baru"], "attachedUnits": []}`;
+baru bikin item array baru (baris kosong = string kosong \"\")"], "attachedUnits": []}
+
+Kalau jawabannya butuh nulis KODE/HTML/script panjang: tetap ikutin aturan array di atas — PECAH tiap
+baris kode jadi 1 item array terpisah (persis kayak baris asli kodenya, boleh diawali spasi buat
+indentasi), JANGAN digabung jadi satu string panjang dengan escape \\n. Kalau ada tanda kutip dua (")
+DI DALAM baris kode/teks, WAJIB di-escape jadi \\" biar JSON-nya tetep valid.`;
 
   let systemPrompt;
   if (!isDataQuery){
-    // Mode RINGAN — obrolan santai, gak nyangkut data trip. Prompt sengaja dibikin
-    // pendek biar AI-nya fokus mikirin jawaban natural, bukan sibuk ngurusin format
-    // laporan yang gak relevan sama sekali.
+    // Mode RINGAN — obrolan/pertanyaan umum, gak nyangkut data trip. Prompt sengaja
+    // dibikin pendek soal instruksi dashboard-nya (biar gak numpuk & bikin AI keder),
+    // tapi persona di atas udah nyatain wawasannya luas gak cuma dashboard.
     systemPrompt = `${basePersona}
 
-User lagi ngobrol santai / nanya hal di luar data trip. Jawab natural aja sesuai konteks obrolan.
+Pertanyaan kali ini gak nyangkut data trip dashboard. Jawab santai & informatif sesuai konteks obrolan,
+pake pengetahuan umum kamu — jangan bilang "gua cuma bisa bantu soal trip" kalau ditanya hal lain,
+karena kamu memang bisa bantu topik apa aja.
 
 ${jsonFormatRule}
 
@@ -529,12 +540,12 @@ Late/Early Arrival Issue's
 (tulis tanggal yang relevan di sini, format DD/MM/YYYY)
 <baris kosong>
 1. LT Number : (isi tripNum)
-    Vendor : (isi vendorName)
-    Driver : (isi driver)
-    Qty Parcel : (isi qtyParcelVal)
-    STA : (isi staDest, format jam di atas)
-    ATA : (isi ataDest, format jam di atas — kalau belum ada tulis "-")
-    Travel Time : (isi durasi tempuh, format "Xh Ym")
+          Vendor : (isi vendorName)
+          Driver : (isi driver)
+          Qty Parcel : (isi qtyParcelVal)
+          STA : (isi staDest, format jam di atas)
+          ATA : (isi ataDest, format jam di atas — kalau belum ada tulis "-")
+          Travel Time : (isi durasi tempuh, format "Xh Ym")
 <baris kosong>
 2. LT Number : ...dst, angka urut lanjut buat tiap trip berikutnya, dengan struktur field yang SAMA PERSIS.
 
@@ -574,7 +585,7 @@ Contoh buat jawaban singkat 1 baris, "replyLines" tetap array isi 1 item, misal:
     // cek daftar model vision terbaru di console.groq.com/docs/vision dan ganti
     // string model di bawah ini.
     const requestBody = {
-      max_tokens: isDataQuery ? 2000 : 400, // obrolan santai gak butuh budget token segede report
+      max_tokens: isDataQuery ? 2000 : 1500, // mode umum tetep dikasih ruang cukup buat jawaban panjang (kode, dll), cuma gak sebesar mode report
       system: systemPrompt,
       messages: messagesForApi
     };
