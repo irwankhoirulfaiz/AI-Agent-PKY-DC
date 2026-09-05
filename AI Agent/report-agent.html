@@ -160,7 +160,6 @@
   <header>
     <div>
       <div class="title">The <span>Odyssey</span></div>
-      <div class="sub">Hallo saya Odyssey, tugas saya disini adalah untuk membantumu dalam melakukan Track Unit yang Late Arrival & Early Arrival serta menyiapkan Report secara langsung ke CL/PL</div>
     </div>
     <div class="sub" id="statusLine">mode: mock data</div>
   </header>
@@ -619,12 +618,12 @@ Late/Early Arrival Issue's
 (tulis tanggal yang relevan di sini, format DD/MM/YYYY)
 <baris kosong>
 1. LT Number : (isi tripNum)
-          Vendor : (isi vendorName)
-          Driver : (isi driver)
-          Qty Parcel : (isi qtyParcelVal)
-          STA : (isi staDest, format jam di atas)
-          ATA : (isi ataDest, format jam di atas — kalau belum ada tulis "-")
-          Travel Time : (isi durasi tempuh, format "Xh Ym")
+   Vendor : (isi vendorName)
+   Driver : (isi driver)
+   Qty Parcel : (isi qtyParcelVal)
+   STA : (isi staDest, format jam di atas)
+   ATA : (isi ataDest, format jam di atas — kalau belum ada tulis "-")
+   Travel Time : (isi durasi tempuh, format "Xh Ym")
 <baris kosong>
 2. LT Number : ...dst, angka urut lanjut buat tiap trip berikutnya, dengan struktur field yang SAMA PERSIS.
 
@@ -677,13 +676,17 @@ Contoh buat jawaban singkat 1 baris, "replyLines" tetap array isi 1 item, misal:
     // (constant GEMINI_MODEL) — model Gemini flash-nya udah multimodal jadi gak
     // perlu ganti model/parameter khusus kalau ada gambar terlampir.
     const requestBody = {
-      max_tokens: isDataQuery ? 3000 : 1500, // mode report dikasih jatah lebih gede
-      // Level thinking: mode data (trip JSON / DW report) butuh AI teliti nyisir
-      // data satu-satu DAN gak kebawa topik riwayat obrolan sebelumnya (misal abis
-      // ditanya report DW, terus ditanya Late Arrival trip — pernah kejadian
-      // AI ke-distract & jawabannya asal gara-gara "minimal" kekurangan mikir).
-      // Obrolan santai tetep "minimal" biar hemat token/latency.
-      thinking_level: isDataQuery ? "low" : "minimal",
+      // Mode DW (berbasis gambar) dikasih jatah PALING gede — laporannya bisa
+      // beberapa blok shift + prosesnya baca gambar, jadi lebih gampang mepet
+      // limit dibanding mode trip (yang data-nya udah rapi JSON).
+      max_tokens: isDwReport ? 4000 : (isDataQuery ? 3000 : 1500),
+      // Level thinking: mode trip JSON butuh AI teliti nyisir data satu-satu DAN
+      // gak kebawa topik riwayat obrolan sebelumnya, jadi dikasih "low". Mode DW
+      // (baca gambar) sengaja diBALIKIN ke "minimal" — akurasinya soal baca
+      // visual tabel, bukan reasoning teks, dan token thinking di sini cuma
+      // ngerebut jatah output yang justru rawan bikin laporan kepotong (JSON
+      // gak valid). Obrolan santai tetep "minimal" biar hemat.
+      thinking_level: isDwReport ? "minimal" : (isDataQuery ? "low" : "minimal"),
       system: systemPrompt,
       contents: contentsForApi
     };
@@ -846,7 +849,7 @@ if (window.firebase && firebase.auth){
 
 (async function init(){
   await loadData();
-  addMessage("agent", "Halo bro, gua AI Agent buat mantau trip Inbound hari ini. Tanya aja, misal \"ada yang Late Arrival hari ini?\" atau \"yang paling lama durasinya berapa?\"");
+  addMessage("agent", "Halo bro, gua AI Agent buat mantau operasional & reporting Palangka Raya DC\"");
 })();
 </script>
 </body>
