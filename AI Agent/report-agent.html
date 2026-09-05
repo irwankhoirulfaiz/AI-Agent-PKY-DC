@@ -516,46 +516,51 @@ dalam percakapan ini — BUKAN dari data trip yang kamu tau. Kalau gak ada gamba
 dilampirkan sama sekali di percakapan ini, bilang aja terus terang minta user paste/lampirkan
 screenshot tabel jadwal DW-nya dulu, JANGAN ngarang angka.
 
+Kalau di riwayat percakapan sebelumnya ada pembahasan topik LAIN (misal data/report trip Inbound),
+ABAIKAN TOTAL itu buat jawaban kali ini — fokus CUMA ke gambar tabel DW yang dilampirkan.
+
 STRUKTUR TABEL yang bakal kamu liat di gambar: kolom "Tanggal", "Permintaan DW Reguler", "Permintaan DW
 Oncall", "Shift" (rentang jam KECIL per baris, misal 00:00-01:00, 01:00-02:00, dst), "Position", "Remark",
 "Kehadiran Actual DW Reguler", "Kehadiran Actual DW Oncall".
 
 PENTING soal cara baca tabelnya — kolom-kolom angka (Permintaan Reguler/Oncall, Kehadiran Actual
-Reguler/Oncall) itu CELL YANG DI-MERGE secara visual: cuma ada 3 BLOK SHIFT BESAR dalam satu hari —
-"00:00-09:00", "08:00-17:00", "16:00-01:00" — dan angka buat tiap kolom itu CUMA NONGOL SEKALI di salah
-satu baris jam kecil di DALAM rentang vertikal blok shift itu (posisi barisnya bisa beda-beda tiap
-kolom, gak harus sejajar). Yang kamu ambil adalah SATU angka per kolom per blok shift (abaikan baris-
-baris kosong di sekitarnya), BUKAN dijumlah dari tiap baris jam kecil.
+Reguler/Oncall) itu CELL YANG DI-MERGE secara visual: dalam satu hari ada BEBERAPA BLOK SHIFT BESAR
+(jumlahnya BISA BEDA-BEDA tiap gambar, JANGAN diasumsikan selalu 3 atau selalu jam yang sama — baca apa
+adanya dari gambar). Tiap blok shift besar itu keliatan dari beberapa baris jam kecil yang
+"digabung"/punya nilai "Position" yang sama secara berurutan; JAM SHIFT yang ditulis di report adalah
+jam AWAL baris paling atas sampai jam AKHIR baris paling bawah dalam blok itu (contoh: kalau blok
+mencakup baris kecil dari "00:00-01:00" sampai "08:00-09:00", maka ditulis "00:00-09:00"). Angka
+Permintaan/Kehadiran Actual buat tiap kolom itu CUMA NONGOL SEKALI di salah satu baris jam kecil di
+DALAM rentang vertikal blok shift itu (posisi barisnya bisa beda-beda tiap kolom, gak harus sejajar).
+Yang kamu ambil adalah SATU angka per kolom per blok shift (abaikan baris-baris kosong di sekitarnya),
+BUKAN dijumlah dari tiap baris jam kecil.
 
-Untuk tiap blok SHIFT (00:00-09:00, 08:00-17:00, 16:00-01:00), hitung:
+Untuk TIAP blok SHIFT yang kamu temuin di gambar (berapa pun jumlahnya, jam berapa pun rentangnya —
+ikutin gambar, jangan hardcode), hitung:
 GAP Reguler = Permintaan DW Reguler - Kehadiran Actual DW Reguler
 GAP Oncall = Permintaan DW Oncall - Kehadiran Actual DW Oncall
 
-Di akhir report, hitung TOTAL cuma buat DW ONCALL aja (jumlahin dari 3 shift, DW Reguler TIDAK usah
-ditotal):
-Total Request DW Oncall = jumlah Permintaan DW Oncall dari 3 shift
-Total Actual DW Oncall = jumlah Kehadiran Actual DW Oncall dari 3 shift
+Di akhir report, hitung TOTAL cuma buat DW ONCALL aja (jumlahin dari SEMUA blok shift yang ada di
+gambar, DW Reguler TIDAK usah ditotal):
+Total Request DW Oncall = jumlah Permintaan DW Oncall dari semua shift
+Total Actual DW Oncall = jumlah Kehadiran Actual DW Oncall dari semua shift
 GAP DW Oncall = Total Request DW Oncall - Total Actual DW Oncall
 Persentase di belakang GAP = (Total Actual DW Oncall / Total Request DW Oncall) x 100, dibulatkan 1
 angka desimal, PAKAI KOMA sebagai pemisah desimal (bukan titik), contoh "88,7%".
 
 TEMPLATE WAJIB (ikuti PERSIS termasuk spasi & urutan, teks polos TANPA tanda bintang/simbol markdown,
-tiap baris = 1 item terpisah di array "replyLines", baris kosong = item string kosong ""):
+tiap baris = 1 item terpisah di array "replyLines", baris kosong = item string kosong ""). Blok
+"SHIFT Pukul ..." di bawah ini DIULANG buat SETIAP blok shift yang ada di gambar (urut dari jam paling
+pagi), pakai jam sesuai gambar (BUKAN contoh jam di bawah ini):
 
 REPORT FULLFILLMENT DAILY WORKER PALANGKA RAYA DC
 (tanggal dari kolom "Tanggal" di gambar, ditulis format "D MMMM YYYY" contoh "5 September 2026")
 <baris kosong>
-SHIFT Pukul 00:00-09:00
+SHIFT Pukul (jam awal blok)-(jam akhir blok)
 Request DW Reguler: (angka) - [Actual: (angka)]  [GAP: (angka)]
 Request DW Oncall: (angka) - [Actual: (angka)]  [GAP: (angka)]
 <baris kosong>
-SHIFT Pukul 08:00-17:00
-Request DW Reguler: (angka) - [Actual: (angka)]  [GAP: (angka)]
-Request DW Oncall: (angka) - [Actual: (angka)]  [GAP: (angka)]
-<baris kosong>
-SHIFT Pukul 16:00-01:00
-Request DW Reguler: (angka) - [Actual: (angka)]  [GAP: (angka)]
-Request DW Oncall: (angka) - [Actual: (angka)]  [GAP: (angka)]
+...(ulangi blok SHIFT di atas buat tiap blok shift berikutnya yang ada di gambar)...
 <baris kosong>
 Total Request DW Oncall: (angka)
 Total Actual DW Oncall: (angka)
@@ -579,6 +584,12 @@ Contoh: {"replyLines": ["Wih nanya gitu bro 😄"], "attachedUnits": []}`;
     // Mode LENGKAP — pertanyaan soal data trip / minta report, baru kirim semua
     // instruksi detail + dump data JSON-nya.
     systemPrompt = `${basePersona}
+
+PENTING soal riwayat obrolan: kalau di riwayat percakapan sebelumnya ada pembahasan topik LAIN (misal
+report DW Fulfillment, atau obrolan santai), ABAIKAN TOTAL kesimpulan/angka dari situ buat jawaban kali
+ini. Pertanyaan sekarang soal data TRIP INBOUND, dan SATU-SATUNYA sumber kebenaran buat data trip
+adalah dump JSON di bawah ini (yang SELALU paling baru/fresh tiap kamu jawab) — jangan kebawa asumsi
+atau pola jawaban dari turn sebelumnya yang topiknya beda.
 
 Data di bawah mencakup SEMUA tanggal yang ada (gak difilter otomatis). Tiap trip punya field "tanggal"
 (format YYYY-MM-DD). Kalau user nanya soal "hari ini", "kemarin", atau tanggal tertentu, kamu yang
@@ -666,7 +677,13 @@ Contoh buat jawaban singkat 1 baris, "replyLines" tetap array isi 1 item, misal:
     // (constant GEMINI_MODEL) — model Gemini flash-nya udah multimodal jadi gak
     // perlu ganti model/parameter khusus kalau ada gambar terlampir.
     const requestBody = {
-      max_tokens: isDataQuery ? 3000 : 1500, // mode report dikasih jatah lebih gede (thinking udah dimatiin di proxy, jadi semua token buat jawaban)
+      max_tokens: isDataQuery ? 3000 : 1500, // mode report dikasih jatah lebih gede
+      // Level thinking: mode data (trip JSON / DW report) butuh AI teliti nyisir
+      // data satu-satu DAN gak kebawa topik riwayat obrolan sebelumnya (misal abis
+      // ditanya report DW, terus ditanya Late Arrival trip — pernah kejadian
+      // AI ke-distract & jawabannya asal gara-gara "minimal" kekurangan mikir).
+      // Obrolan santai tetep "minimal" biar hemat token/latency.
+      thinking_level: isDataQuery ? "low" : "minimal",
       system: systemPrompt,
       contents: contentsForApi
     };
