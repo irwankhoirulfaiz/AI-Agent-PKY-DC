@@ -11,9 +11,9 @@
 <!-- Firebase SDK — sama persis pola yang dipakai di inbound.html / outbound.html.
      auth-guard.js yang nyimpen firebaseConfig asli & handle login redirect.
      Taruh file ini di folder project yang SAMA dengan auth-guard.js biar konek otomatis.
-     Chat AI-nya manggil Groq API (model openai/gpt-oss-120b) lewat proxy Netlify
-     Function di netlify/functions/groq-proxy.js — API key disimpan aman di server
-     (env variable GROQ_API_KEY), gak pernah ke-expose di browser. -->
+     Chat AI-nya manggil Google Gemini API lewat proxy Netlify Function di
+     netlify/functions/gemini-proxy.js — API key disimpan aman di server
+     (env variable GEMINI_API_KEY), gak pernah ke-expose di browser. -->
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
@@ -160,7 +160,6 @@
   <header>
     <div>
       <div class="title">The <span>Odyssey</span></div>
-      <div class="sub">Hallo saya Odyssey, tugas saya disini adalah untuk membantumu dalam melakukan Track Unit yang Late Arrival & Early Arrival serta menyiapkan Report secara langsung ke CL/PL</div>
     </div>
     <div class="sub" id="statusLine">mode: mock data</div>
   </header>
@@ -419,15 +418,16 @@ function removeTyping(){
 }
 
 // Ubah pesan error teknis dari API jadi kalimat simpel yang enak dibaca user
-// biasa, bukan mentahan pesan Groq/HTTP yang penuh istilah teknis.
+// biasa, bukan mentahan pesan Gemini/HTTP yang penuh istilah teknis.
 function simplifyErrorMessage(raw){
   const msg = String(raw || "");
 
-  // Kena limit pemakaian (rate limit / token per menit / per hari, dll)
-  if (/rate.?limit/i.test(msg) || /too large/i.test(msg) || /tokens per (minute|day)/i.test(msg) || /quota/i.test(msg)){
-    // Kalau Groq kasih tau berapa detik lagi harus nunggu ("try again in 12.3s"),
-    // hitung jadi jam WIB yang konkret. Kalau gak ada info itu, kasih estimasi umum.
-    const waitMatch = msg.match(/try again in\s*([\d.]+)\s*s/i);
+  // Kena limit pemakaian (rate limit / quota harian free tier Gemini, dll)
+  if (/rate.?limit/i.test(msg) || /RESOURCE_EXHAUSTED/i.test(msg) || /quota/i.test(msg)){
+    // Kalau Gemini kasih tau berapa detik lagi harus nunggu (retryDelay/"try again
+    // in 12.3s"), hitung jadi jam WIB yang konkret. Kalau gak ada info itu, kasih
+    // estimasi umum.
+    const waitMatch = msg.match(/try again in\s*([\d.]+)\s*s/i) || msg.match(/"retryDelay"\s*:\s*"([\d.]+)s"/i);
     if (waitMatch){
       const waitSeconds = parseFloat(waitMatch[1]);
       const retryAt = new Date(Date.now() + waitSeconds * 1000);
@@ -438,9 +438,12 @@ function simplifyErrorMessage(raw){
     return "Anda telah melebihi limit penggunaan AI Agent bro. Mohon tunggu sekitar 1 menit lalu coba lagi ya.";
   }
 
-  // Model gak ketemu/gak bisa diakses (biasanya karena Groq pensiunin modelnya)
-  if (/does not exist|do not have access/i.test(msg)){
+  // Model gak ketemu/gak bisa diakses, atau kena filter safety Gemini
+  if (/does not exist|do not have access|not found|NOT_FOUND/i.test(msg)){
     return "Waduh, model AI-nya lagi bermasalah di sisi server bro. Coba lagi sebentar, atau kabarin admin kalau masih error terus.";
+  }
+  if (/SAFETY|blockReason|PROHIBITED_CONTENT/i.test(msg)){
+    return "Waduh, jawabannya keblokir filter safety AI bro. Coba tulis ulang pertanyaannya dengan cara lain ya.";
   }
 
   // Server function belum ke-deploy / respons bukan JSON
@@ -540,12 +543,12 @@ Late/Early Arrival Issue's
 (tulis tanggal yang relevan di sini, format DD/MM/YYYY)
 <baris kosong>
 1. LT Number : (isi tripNum)
-          Vendor : (isi vendorName)
-          Driver : (isi driver)
-          Qty Parcel : (isi qtyParcelVal)
-          STA : (isi staDest, format jam di atas)
-          ATA : (isi ataDest, format jam di atas — kalau belum ada tulis "-")
-          Travel Time : (isi durasi tempuh, format "Xh Ym")
+   Vendor : (isi vendorName)
+   Driver : (isi driver)
+   Qty Parcel : (isi qtyParcelVal)
+   STA : (isi staDest, format jam di atas)
+   ATA : (isi ataDest, format jam di atas — kalau belum ada tulis "-")
+   Travel Time : (isi durasi tempuh, format "Xh Ym")
 <baris kosong>
 2. LT Number : ...dst, angka urut lanjut buat tiap trip berikutnya, dengan struktur field yang SAMA PERSIS.
 
@@ -562,39 +565,47 @@ ${jsonFormatRule}
 Contoh buat jawaban singkat 1 baris, "replyLines" tetap array isi 1 item, misal: {"replyLines": ["Gak ada unit Late Arrival hari ini bro."], "attachedUnits": []}`;
   }
 
-  // Groq pakai format OpenAI-compatible: role "user"/"assistant" langsung, isi di field "content"
-  // (content bisa string biasa, ATAU array [{type:"text",...},{type:"image_url",...}] kalau ada gambar)
+  // Gemini pakai format "contents": array {role:"user"|"model", parts:[...]}
+  // (BUKAN "assistant" kayak OpenAI/Groq — Gemini pakai "model"). Tiap part
+  // bisa {text:"..."} biasa, atau {inline_data:{mime_type, data}} buat gambar
+  // (base64 TANPA prefix "data:image/...;base64,", makanya di-strip di bawah).
   // Batasin cuma N pesan TERAKHIR yang dikirim ulang ke API (bukan seluruh riwayat
   // dari awal sesi) — biar prompt gak numpuk makin panjang makin berat tiap turn,
   // yang bikin token per-request membengkak & gampang kena limit di percakapan panjang.
   const HISTORY_LIMIT = 12;
   const recentHistory = chatHistory.slice(-HISTORY_LIMIT);
-  const messagesForApi = recentHistory.map(m => ({
-    role: m.role === "assistant" ? "assistant" : "user",
-    content: m.content
+  function toGeminiParts(content){
+    if (Array.isArray(content)){
+      return content.map(part => {
+        if (part && part.type === "image_url"){
+          const url = (part.image_url && part.image_url.url) || "";
+          const match = url.match(/^data:([^;]+);base64,(.+)$/);
+          return match
+            ? { inline_data: { mime_type: match[1], data: match[2] } }
+            : { text: "" };
+        }
+        return { text: String((part && part.text) || "") };
+      });
+    }
+    return [{ text: String(content || "") }];
+  }
+  const contentsForApi = recentHistory.map(m => ({
+    role: m.role === "assistant" ? "model" : "user",
+    parts: toGeminiParts(m.content)
   }));
-  const requestHasImage = recentHistory.some(m => m.hasImage);
 
   try{
-    // Panggil lewat Netlify Function proxy (bukan langsung ke Groq) supaya
-    // API key gak pernah ke-expose di browser. Lihat netlify/functions/groq-proxy.js
-    // PENTING: model default (openai/gpt-oss-120b) itu TEXT-ONLY, gak bisa "lihat"
-    // gambar. Kirim "model" override + flag "vision:true" kalau ada gambar terlampir.
-    // Groq sering "pensiunin" model vision-nya (Llama 4 Scout/Maverick udah almarhum
-    // per pertengahan 2026) — kalau suatu saat error lagi "model does not exist",
-    // cek daftar model vision terbaru di console.groq.com/docs/vision dan ganti
-    // string model di bawah ini.
+    // Panggil lewat Netlify Function proxy (bukan langsung ke Gemini) supaya
+    // API key gak pernah ke-expose di browser. Lihat netlify/functions/gemini-proxy.js
+    // Model (termasuk dukungan vision buat gambar) udah ditentuin di sisi proxy
+    // (constant GEMINI_MODEL) — model Gemini flash-nya udah multimodal jadi gak
+    // perlu ganti model/parameter khusus kalau ada gambar terlampir.
     const requestBody = {
       max_tokens: isDataQuery ? 2000 : 1500, // mode umum tetep dikasih ruang cukup buat jawaban panjang (kode, dll), cuma gak sebesar mode report
       system: systemPrompt,
-      messages: messagesForApi
+      contents: contentsForApi
     };
-    if (requestHasImage){
-      requestBody.model = "qwen/qwen3.6-27b"; // vision-capable di Groq (model Llama 4 Scout udah di-deprecate)
-      requestBody.vision = true;
-      requestBody.max_tokens = 900; // tier on_demand model ini limit-nya cuma 1000 token output/menit (OTPM)
-    }
-    const response = await fetch("/.netlify/functions/groq-proxy", {
+    const response = await fetch("/.netlify/functions/gemini-proxy", {
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body: JSON.stringify(requestBody)
@@ -609,10 +620,17 @@ Contoh buat jawaban singkat 1 baris, "replyLines" tetap array isi 1 item, misal:
     if (!response.ok){
       throw new Error((data && data.error && data.error.message) ? data.error.message : ((data && data.error) ? data.error : ("HTTP " + response.status + " (respons kosong)")));
     }
-    const choice = (data.choices && data.choices[0]) || null;
-    let text = choice && choice.message && choice.message.content
-      ? String(choice.message.content).trim()
+    // Gemini balikin "candidates" (bukan "choices" kayak OpenAI/Groq). Kalau
+    // jawaban keblokir safety filter, candidates bisa kosong & alasannya ada
+    // di promptFeedback.blockReason.
+    const candidate = (data.candidates && data.candidates[0]) || null;
+    if (!candidate && data.promptFeedback && data.promptFeedback.blockReason){
+      throw new Error("blockReason: " + data.promptFeedback.blockReason);
+    }
+    const partsText = candidate && candidate.content && Array.isArray(candidate.content.parts)
+      ? candidate.content.parts.map(p => (p && p.text) || "").join("")
       : "";
+    let text = partsText.trim();
     // Bersihin code fence di mana pun posisinya (bukan cuma di awal/akhir persis)
     text = text.replace(/```json/gi, "").replace(/```/g, "").trim();
 
@@ -625,7 +643,7 @@ Contoh buat jawaban singkat 1 baris, "replyLines" tetap array isi 1 item, misal:
       text = text.slice(firstBrace, lastBrace + 1);
     }
 
-    // Coba parse langsung dulu. Kalau AI-nya (Groq) masih ngasal — misal nulis
+    // Coba parse langsung dulu. Kalau AI-nya (Gemini) masih ngasal — misal nulis
     // enter/tab literal, over-escape jadi "\\n" dobel, pakai tanda kutip
     // "pintar" (smart quotes), atau nyisain trailing comma — di dalam string
     // JSON, JSON.parse bisa gagal atau kebaca aneh. Sebelumnya ini bikin
