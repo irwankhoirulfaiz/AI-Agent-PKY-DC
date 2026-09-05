@@ -11,9 +11,9 @@
 <!-- Firebase SDK — sama persis pola yang dipakai di inbound.html / outbound.html.
      auth-guard.js yang nyimpen firebaseConfig asli & handle login redirect.
      Taruh file ini di folder project yang SAMA dengan auth-guard.js biar konek otomatis.
-     Chat AI-nya manggil Google Gemini API (free tier) lewat proxy Netlify Function
-     di netlify/functions/gemini-proxy.js — API key disimpan aman di server (env
-     variable GEMINI_API_KEY), gak pernah ke-expose di browser. -->
+     Chat AI-nya manggil Groq API (model openai/gpt-oss-120b) lewat proxy Netlify
+     Function di netlify/functions/groq-proxy.js — API key disimpan aman di server
+     (env variable GROQ_API_KEY), gak pernah ke-expose di browser. -->
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
@@ -131,12 +131,8 @@
   </header>
 
   <div class="topbar">
-    <label for="dateInput">Tanggal</label>
-    <input type="date" id="dateInput">
-    <span class="stat">Live Firebase</span>
-    <label class="switch"><input type="checkbox" id="liveToggle"><span class="slider"></span></label>
-    <div class="spacer"></div>
     <span class="stat" id="quickStat"><b>0</b> trip tercatat</span>
+    <div class="spacer"></div>
     <button class="icon-btn" id="refreshBtn">Refresh Data</button>
   </div>
 
@@ -147,18 +143,6 @@
       <button id="sendBtn">Kirim</button>
     </div>
   </div>
-
-  <details class="note-details">
-    <summary>🔧 Catatan konfigurasi</summary>
-    <div class="inner">
-      File ini baca data dari <code>prDcInboundTracking/lhTracking</code> di Realtime Database,
-      persis kayak yang dipakai <code>inbound.html</code> — dan status Late/Early/On Time dihitung
-      pakai logic yang sama (durasi <code>atdOrigin</code> → <code>ataDest</code>: &lt;6 jam Early Arrived,
-      6–6.5 jam On Time, &gt;6.5 jam Late Arrival). Taruh file ini di folder project yang sama dengan
-      <code>auth-guard.js</code> biar Firebase-nya konek otomatis pakai session login yang udah ada.
-      Sebelum itu, chat ini jalan pakai data contoh (mock).
-    </div>
-  </details>
 
 </div>
 
@@ -249,13 +233,15 @@ function normalizeTrip(t){
 }
 
 async function loadData(){
-  const dateStr = document.getElementById("dateInput").value;
-  const isLive = document.getElementById("liveToggle").checked;
+  // Auto: kalau session login (auth-guard.js) udah kevalidasi, langsung sync live
+  // dari Firebase. Kalau belum login / firebase belum siap, fallback ke data contoh.
+  const isLive = firebaseReady;
   document.getElementById("statusLine").textContent = "mode: " + (isLive?"live firebase":"mock data") + " — memuat...";
   try{
-    const raw = isLive ? await fetchLiveTrips() : generateMockData(dateStr);
-    const normalized = raw.map(normalizeTrip);
-    currentTrips = dateStr ? normalized.filter(t => t.tanggal === dateStr) : normalized;
+    const raw = isLive ? await fetchLiveTrips() : generateMockData();
+    // Semua tanggal ditampung tanpa difilter — AI Agent yang nyortir sendiri
+    // berdasarkan field "tanggal" tiap trip waktu ada pertanyaan soal tanggal tertentu.
+    currentTrips = raw.map(normalizeTrip);
     document.getElementById("quickStat").innerHTML = "<b>"+currentTrips.length+"</b> trip tercatat";
     document.getElementById("statusLine").textContent = "mode: " + (isLive?"live firebase":"mock data");
   }catch(e){
@@ -336,10 +322,13 @@ async function askAgent(question){
   chatHistory.push({role:"user", content: question});
   addTyping();
 
-  const dateStr = document.getElementById("dateInput").value;
   const systemPrompt = `Kamu AI Agent buat Shift Lead Sortation Center. Kamu jawab pertanyaan soal data
-Inbound (trip Line Haul dari origin ke DC) buat tanggal ${dateStr}, gaya santai kayak ngobrol sama rekan
-kerja sendiri (natural, boleh pakai "bro", gak kaku/formal).
+Inbound (trip Line Haul dari origin ke DC), gaya santai kayak ngobrol sama rekan kerja sendiri (natural,
+boleh pakai "bro", gak kaku/formal).
+
+Data di bawah mencakup SEMUA tanggal yang ada (gak difilter otomatis). Tiap trip punya field "tanggal"
+(format YYYY-MM-DD). Kalau user nanya soal "hari ini", "kemarin", atau tanggal tertentu, kamu yang
+nyortir sendiri dari field "tanggal" itu — jangan asumsi semua data itu buat satu tanggal yang sama.
 
 Arti status: "Late Arrival" = durasi tempuh atdOrigin ke ataDest lebih dari 6.5 jam (atau ETA 6.5 jam
 dari atdOrigin udah lewat tapi belum sampai). "Early Arrived" (kadang disebut Early Arrival) = durasi
@@ -351,22 +340,22 @@ ${JSON.stringify(currentTrips, null, 2)}
 WAJIB balas HANYA dengan JSON valid, tanpa teks lain di luar JSON, tanpa markdown code fence, persis format ini:
 {"reply": "jawaban singkat santai di sini", "attachedUnits": [ /* array trip object dari data di atas yang relevan sama pertanyaan, kosongkan [] kalau gak relevan/gak ada */ ]}`;
 
-  // Gemini pakai role "user"/"model" (bukan "user"/"assistant" kayak Anthropic)
-  const contentsForApi = chatHistory.map(m => ({
-    role: m.role === "assistant" ? "model" : "user",
-    parts: [{ text: m.content }]
+  // Groq pakai format OpenAI-compatible: role "user"/"assistant" langsung, isi di field "content"
+  const messagesForApi = chatHistory.map(m => ({
+    role: m.role === "assistant" ? "assistant" : "user",
+    content: m.content
   }));
 
   try{
-    // Panggil lewat Netlify Function proxy (bukan langsung ke Gemini) supaya
-    // API key gak pernah ke-expose di browser. Lihat netlify/functions/gemini-proxy.js
-    const response = await fetch("/.netlify/functions/gemini-proxy", {
+    // Panggil lewat Netlify Function proxy (bukan langsung ke Groq) supaya
+    // API key gak pernah ke-expose di browser. Lihat netlify/functions/groq-proxy.js
+    const response = await fetch("/.netlify/functions/groq-proxy", {
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body: JSON.stringify({
         max_tokens:1000,
         system: systemPrompt,
-        contents: contentsForApi
+        messages: messagesForApi
       })
     });
     const rawText = await response.text();
@@ -379,9 +368,9 @@ WAJIB balas HANYA dengan JSON valid, tanpa teks lain di luar JSON, tanpa markdow
     if (!response.ok){
       throw new Error((data && data.error && data.error.message) ? data.error.message : ((data && data.error) ? data.error : ("HTTP " + response.status + " (respons kosong)")));
     }
-    const candidate = (data.candidates && data.candidates[0]) || null;
-    let text = candidate && candidate.content && candidate.content.parts
-      ? candidate.content.parts.map(p => p.text||"").join("\n").trim()
+    const choice = (data.choices && data.choices[0]) || null;
+    let text = choice && choice.message && choice.message.content
+      ? String(choice.message.content).trim()
       : "";
     text = text.replace(/^```json/i,"").replace(/^```/,"").replace(/```$/,"").trim();
 
@@ -399,10 +388,7 @@ WAJIB balas HANYA dengan JSON valid, tanpa teks lain di luar JSON, tanpa markdow
   }
 }
 
-document.getElementById("dateInput").valueAsDate = new Date();
 document.getElementById("refreshBtn").addEventListener("click", loadData);
-document.getElementById("liveToggle").addEventListener("change", loadData);
-document.getElementById("dateInput").addEventListener("change", loadData);
 
 document.getElementById("sendBtn").addEventListener("click", () => {
   const input = document.getElementById("chatInput");
@@ -415,11 +401,15 @@ document.getElementById("chatInput").addEventListener("keydown", (e) => {
   if (e.key === "Enter") document.getElementById("sendBtn").click();
 });
 
-// Sama kayak inbound.html: baru mulai sync Firebase SETELAH status login kevalidasi
+// Sama kayak inbound.html: baru mulai sync Firebase SETELAH status login kevalidasi.
+// Begitu status login berubah (mis. auth-guard.js baru selesai validasi setelah
+// halaman ke-render), langsung auto-reload data dari live Firebase.
 if (window.firebase && firebase.auth){
   try{
     firebase.auth().onAuthStateChanged(function(user){
+      const wasReady = firebaseReady;
       firebaseReady = !!user;
+      if (firebaseReady && !wasReady) loadData();
     });
   }catch(e){ console.warn("Firebase auth belum siap:", e.message); }
 }
