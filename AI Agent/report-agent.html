@@ -418,6 +418,40 @@ function removeTyping(){
   if (el) el.remove();
 }
 
+// Ubah pesan error teknis dari API jadi kalimat simpel yang enak dibaca user
+// biasa, bukan mentahan pesan Groq/HTTP yang penuh istilah teknis.
+function simplifyErrorMessage(raw){
+  const msg = String(raw || "");
+
+  // Kena limit pemakaian (rate limit / token per menit / per hari, dll)
+  if (/rate.?limit/i.test(msg) || /too large/i.test(msg) || /tokens per (minute|day)/i.test(msg) || /quota/i.test(msg)){
+    // Kalau Groq kasih tau berapa detik lagi harus nunggu ("try again in 12.3s"),
+    // hitung jadi jam WIB yang konkret. Kalau gak ada info itu, kasih estimasi umum.
+    const waitMatch = msg.match(/try again in\s*([\d.]+)\s*s/i);
+    if (waitMatch){
+      const waitSeconds = parseFloat(waitMatch[1]);
+      const retryAt = new Date(Date.now() + waitSeconds * 1000);
+      const hh = String(retryAt.getHours()).padStart(2,"0");
+      const mm = String(retryAt.getMinutes()).padStart(2,"0");
+      return `Anda telah melebihi limit penggunaan AI Agent. Mohon gunakan kembali pada jam ${hh}:${mm} WIB ya bro.`;
+    }
+    return "Anda telah melebihi limit penggunaan AI Agent bro. Mohon tunggu sekitar 1 menit lalu coba lagi ya.";
+  }
+
+  // Model gak ketemu/gak bisa diakses (biasanya karena Groq pensiunin modelnya)
+  if (/does not exist|do not have access/i.test(msg)){
+    return "Waduh, model AI-nya lagi bermasalah di sisi server bro. Coba lagi sebentar, atau kabarin admin kalau masih error terus.";
+  }
+
+  // Server function belum ke-deploy / respons bukan JSON
+  if (/non-JSON|Server balikin respons/i.test(msg)){
+    return "Waduh, server AI Agent-nya lagi gak bisa dihubungin bro. Coba refresh & tanya lagi sebentar ya.";
+  }
+
+  // Fallback umum — gak nampilin detail teknis mentah ke user
+  return "Waduh, gagal ngambil jawaban AI bro. Coba tanya ulang sebentar lagi ya.";
+}
+
 async function askAgent(question, imageDataUrl){
   addMessage("user", question, null, imageDataUrl);
   // Kalau ada gambar, isi content jadi array format vision (OpenAI-compatible)
@@ -514,6 +548,7 @@ Contoh buat jawaban singkat 1 baris, "replyLines" tetap array isi 1 item, misal:
     if (requestHasImage){
       requestBody.model = "qwen/qwen3.6-27b"; // vision-capable di Groq (model Llama 4 Scout udah di-deprecate)
       requestBody.vision = true;
+      requestBody.max_tokens = 900; // tier on_demand model ini limit-nya cuma 1000 token output/menit (OTPM)
     }
     const response = await fetch("/.netlify/functions/groq-proxy", {
       method:"POST",
@@ -599,7 +634,7 @@ Contoh buat jawaban singkat 1 baris, "replyLines" tetap array isi 1 item, misal:
   }catch(e){
     console.error(e);
     removeTyping();
-    addMessage("agent", "Waduh, gagal ngambil jawaban: " + e.message);
+    addMessage("agent", simplifyErrorMessage(e.message));
   }
 }
 
