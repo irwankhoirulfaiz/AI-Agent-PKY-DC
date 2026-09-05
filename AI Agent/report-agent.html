@@ -477,7 +477,12 @@ async function askAgent(question, imageDataUrl){
   // itu yang bikin AI keder/salah format DAN boros token (gampang kepentok limit).
   // Data & template berat cuma dikirim kalau emang relevan.
   const dataKeywords = /report|laporan|trip|late|telat|awal|early|unit|vendor|driver|status|hari ini|kemarin|tanggal|durasi|jadwal|\bsta\b|\beta\b|\bata\b|\bstd\b|\blt[\s-]?\d|nomor|plat|parcel|qty|data|dc\b|banjarmasin|sampit|kapuas|pangkalan/i;
-  const isDataQuery = dataKeywords.test(question || "") || !!imageDataUrl;
+  // Report kedua: DW (Daily Worker) Fulfillment — beda topik dari trip Inbound,
+  // datanya BUKAN dari currentTrips (Firebase) tapi dari GAMBAR tabel jadwal DW
+  // yang di-paste user (screenshot spreadsheet shift/permintaan/kehadiran).
+  const dwKeywords = /\bdw\b|fulfillment|daily worker|reguler|on-?call/i;
+  const isDwReport = dwKeywords.test(question || "");
+  const isDataQuery = isDwReport || dataKeywords.test(question || "") || !!imageDataUrl;
 
   const basePersona = `Kamu Odyssey — AI Agent yang awalnya dibikin buat bantu Shift Lead Sortation Center
 mantau trip Inbound (Line Haul dari origin ke DC), TAPI wawasan kamu gak kebatas itu doang. Kamu punya
@@ -498,7 +503,66 @@ indentasi), JANGAN digabung jadi satu string panjang dengan escape \\n. Kalau ad
 DI DALAM baris kode/teks, WAJIB di-escape jadi \\" biar JSON-nya tetep valid.`;
 
   let systemPrompt;
-  if (!isDataQuery){
+  if (isDwReport){
+    // Mode DW FULFILLMENT REPORT — topik & sumber data BEDA dari trip Inbound:
+    // gak ada dump JSON dari Firebase di sini, datanya AI baca sendiri langsung
+    // dari GAMBAR tabel jadwal DW yang di-paste user (Ctrl+V) di pesan ini ATAU
+    // di riwayat pesan terakhir (kalau user nanya follow-up tanpa paste ulang).
+    systemPrompt = `${basePersona}
+
+Pertanyaan kali ini soal REPORT FULFILLMENT DAILY WORKER (DW), bukan soal trip Inbound. Sumber datanya
+ADALAH GAMBAR (screenshot tabel jadwal DW) yang dilampirkan user di pesan ini atau di pesan sebelumnya
+dalam percakapan ini — BUKAN dari data trip yang kamu tau. Kalau gak ada gambar tabel DW yang
+dilampirkan sama sekali di percakapan ini, bilang aja terus terang minta user paste/lampirkan
+screenshot tabel jadwal DW-nya dulu, JANGAN ngarang angka.
+
+STRUKTUR TABEL yang bakal kamu liat di gambar: kolom "Tanggal", "Permintaan DW Reguler", "Permintaan DW
+Oncall", "Shift" (rentang jam KECIL per baris, misal 00:00-01:00, 01:00-02:00, dst), "Position", "Remark",
+"Kehadiran Actual DW Reguler", "Kehadiran Actual DW Oncall".
+
+PENTING soal cara baca tabelnya — kolom-kolom angka (Permintaan Reguler/Oncall, Kehadiran Actual
+Reguler/Oncall) itu CELL YANG DI-MERGE secara visual: cuma ada 3 BLOK SHIFT BESAR dalam satu hari —
+"00:00-09:00", "08:00-17:00", "16:00-01:00" — dan angka buat tiap kolom itu CUMA NONGOL SEKALI di salah
+satu baris jam kecil di DALAM rentang vertikal blok shift itu (posisi barisnya bisa beda-beda tiap
+kolom, gak harus sejajar). Yang kamu ambil adalah SATU angka per kolom per blok shift (abaikan baris-
+baris kosong di sekitarnya), BUKAN dijumlah dari tiap baris jam kecil.
+
+Untuk tiap blok SHIFT (00:00-09:00, 08:00-17:00, 16:00-01:00), hitung:
+GAP Reguler = Permintaan DW Reguler - Kehadiran Actual DW Reguler
+GAP Oncall = Permintaan DW Oncall - Kehadiran Actual DW Oncall
+
+Di akhir report, hitung TOTAL cuma buat DW ONCALL aja (jumlahin dari 3 shift, DW Reguler TIDAK usah
+ditotal):
+Total Request DW Oncall = jumlah Permintaan DW Oncall dari 3 shift
+Total Actual DW Oncall = jumlah Kehadiran Actual DW Oncall dari 3 shift
+GAP DW Oncall = Total Request DW Oncall - Total Actual DW Oncall
+Persentase di belakang GAP = (Total Actual DW Oncall / Total Request DW Oncall) x 100, dibulatkan 1
+angka desimal, PAKAI KOMA sebagai pemisah desimal (bukan titik), contoh "88,7%".
+
+TEMPLATE WAJIB (ikuti PERSIS termasuk spasi & urutan, teks polos TANPA tanda bintang/simbol markdown,
+tiap baris = 1 item terpisah di array "replyLines", baris kosong = item string kosong ""):
+
+REPORT FULLFILLMENT DAILY WORKER PALANGKA RAYA DC
+(tanggal dari kolom "Tanggal" di gambar, ditulis format "D MMMM YYYY" contoh "5 September 2026")
+<baris kosong>
+SHIFT Pukul 00:00-09:00
+Request DW Reguler: (angka) - [Actual: (angka)]  [GAP: (angka)]
+Request DW Oncall: (angka) - [Actual: (angka)]  [GAP: (angka)]
+<baris kosong>
+SHIFT Pukul 08:00-17:00
+Request DW Reguler: (angka) - [Actual: (angka)]  [GAP: (angka)]
+Request DW Oncall: (angka) - [Actual: (angka)]  [GAP: (angka)]
+<baris kosong>
+SHIFT Pukul 16:00-01:00
+Request DW Reguler: (angka) - [Actual: (angka)]  [GAP: (angka)]
+Request DW Oncall: (angka) - [Actual: (angka)]  [GAP: (angka)]
+<baris kosong>
+Total Request DW Oncall: (angka)
+Total Actual DW Oncall: (angka)
+GAP DW Oncall: (angka)  / [(persentase)%]
+
+${jsonFormatRule}`;
+  } else if (!isDataQuery){
     // Mode RINGAN — obrolan/pertanyaan umum, gak nyangkut data trip. Prompt sengaja
     // dibikin pendek soal instruksi dashboard-nya (biar gak numpuk & bikin AI keder),
     // tapi persona di atas udah nyatain wawasannya luas gak cuma dashboard.
@@ -544,12 +608,12 @@ Late/Early Arrival Issue's
 (tulis tanggal yang relevan di sini, format DD/MM/YYYY)
 <baris kosong>
 1. LT Number : (isi tripNum)
-   Vendor : (isi vendorName)
-   Driver : (isi driver)
-   Qty Parcel : (isi qtyParcelVal)
-   STA : (isi staDest, format jam di atas)
-   ATA : (isi ataDest, format jam di atas — kalau belum ada tulis "-")
-   Travel Time : (isi durasi tempuh, format "Xh Ym")
+          Vendor : (isi vendorName)
+          Driver : (isi driver)
+          Qty Parcel : (isi qtyParcelVal)
+          STA : (isi staDest, format jam di atas)
+          ATA : (isi ataDest, format jam di atas — kalau belum ada tulis "-")
+          Travel Time : (isi durasi tempuh, format "Xh Ym")
 <baris kosong>
 2. LT Number : ...dst, angka urut lanjut buat tiap trip berikutnya, dengan struktur field yang SAMA PERSIS.
 
