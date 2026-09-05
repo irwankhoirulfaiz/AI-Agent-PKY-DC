@@ -121,18 +121,32 @@
   }
 
   .chat-input-row{
-    display:flex; gap:8px; padding:12px; border-top:1px solid var(--line); background:var(--panel);
+    display:flex; flex-direction:column; gap:8px; padding:12px; border-top:1px solid var(--line); background:var(--panel);
   }
-  .chat-input-row input{
+  .chat-input-inner{display:flex; gap:8px;}
+  .chat-input-inner input{
     flex:1; background:var(--panel-2); border:1px solid var(--line); color:var(--text);
     padding:11px 14px; border-radius:20px; font-size:14px; font-family:inherit;
   }
-  .chat-input-row input:focus{outline:none; border-color:var(--amber);}
-  .chat-input-row button{
+  .chat-input-inner input:focus{outline:none; border-color:var(--amber);}
+  .chat-input-inner button{
     background:var(--amber); color:#241704; border:none; border-radius:20px;
     padding:0 20px; font-weight:600; font-size:13px; cursor:pointer; font-family:inherit;
   }
-  .chat-input-row button:disabled{opacity:.5; cursor:default;}
+  .chat-input-inner button:disabled{opacity:.5; cursor:default;}
+
+  .img-preview-row{display:none; align-items:center; gap:10px; padding:4px 4px 0;}
+  .img-preview-row.show{display:flex;}
+  .img-preview-row .thumb-wrap{position:relative; width:52px; height:52px; flex:none;}
+  .img-preview-row img{width:52px; height:52px; object-fit:cover; border-radius:8px; border:1px solid var(--line); display:block;}
+  .img-preview-row .remove-img{
+    position:absolute; top:-6px; right:-6px; width:18px; height:18px; border-radius:50%;
+    background:var(--red); color:#fff; border:none; font-size:11px; line-height:1; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; padding:0;
+  }
+  .img-preview-row .hint{font-size:11px; color:var(--muted);}
+
+  .msg-image{max-width:220px; border-radius:10px; border:1px solid var(--line); display:block; cursor:zoom-in;}
 
   details.note-details{margin-top:12px; font-size:12px; color:var(--muted);}
   details.note-details summary{cursor:pointer; color:var(--cyan);}
@@ -160,8 +174,17 @@
   <div class="chat-panel">
     <div id="chatLog"></div>
     <div class="chat-input-row">
-      <input id="chatInput" type="text" placeholder='Tanya AI Agent... misal "ada unit Late Arrival hari ini?"'>
-      <button id="sendBtn">Kirim</button>
+      <div class="img-preview-row" id="imgPreviewRow">
+        <div class="thumb-wrap">
+          <img id="imgPreviewThumb" src="" alt="preview">
+          <button class="remove-img" id="removeImgBtn" type="button" title="Hapus gambar">✕</button>
+        </div>
+        <span class="hint">Gambar siap dikirim — tambahin pertanyaan (opsional) lalu Kirim</span>
+      </div>
+      <div class="chat-input-inner">
+        <input id="chatInput" type="text" placeholder='Tanya AI Agent... misal "ada unit Late Arrival hari ini?" (bisa paste gambar Ctrl+V)'>
+        <button id="sendBtn">Kirim</button>
+      </div>
     </div>
   </div>
 
@@ -313,24 +336,34 @@ function renderAttachCard(units){
   </table></div>`;
 }
 
-function addMessage(role, text, attachUnits){
+function addMessage(role, text, attachUnits, imageDataUrl){
   const log = document.getElementById("chatLog");
   const wrap = document.createElement("div");
   wrap.className = "msg " + (role==="user" ? "user" : "agent");
   const who = document.createElement("div");
   who.className = "who";
   who.textContent = role==="user" ? "Lo" : "Odyssey";
-  const bubble = document.createElement("div");
-  bubble.className = "bubble";
-  bubble.textContent = text;
   wrap.appendChild(who);
-  wrap.appendChild(bubble);
+  if (imageDataUrl){
+    const img = document.createElement("img");
+    img.className = "msg-image";
+    img.src = imageDataUrl;
+    img.alt = "gambar terlampir";
+    img.addEventListener("click", () => window.open(imageDataUrl, "_blank"));
+    wrap.appendChild(img);
+  }
+  if (text && text.trim()){
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = text;
+    wrap.appendChild(bubble);
+  }
   if (attachUnits && attachUnits.length){
     const card = document.createElement("div");
     card.innerHTML = renderAttachCard(attachUnits);
     wrap.appendChild(card);
   }
-  if (role !== "user"){
+  if (role !== "user" && text && text.trim()){
     const copyBtn = document.createElement("button");
     copyBtn.className = "copy-btn";
     copyBtn.type = "button";
@@ -385,9 +418,17 @@ function removeTyping(){
   if (el) el.remove();
 }
 
-async function askAgent(question){
-  addMessage("user", question);
-  chatHistory.push({role:"user", content: question});
+async function askAgent(question, imageDataUrl){
+  addMessage("user", question, null, imageDataUrl);
+  // Kalau ada gambar, isi content jadi array format vision (OpenAI-compatible)
+  // biar bisa dikirim ke model yang bisa "lihat" gambar lewat proxy.
+  const userContent = imageDataUrl
+    ? [
+        { type:"text", text: question || "Tolong lihat & jelasin gambar ini bro." },
+        { type:"image_url", image_url:{ url: imageDataUrl } }
+      ]
+    : question;
+  chatHistory.push({role:"user", content: userContent, hasImage: !!imageDataUrl});
   addTyping();
 
   const lateCount = currentTrips.filter(t => t.status === "Late Arrival").length;
@@ -449,22 +490,33 @@ WAJIB balas HANYA dengan JSON valid, tanpa teks lain di luar JSON, tanpa markdow
 Contoh buat jawaban singkat 1 baris, "replyLines" tetap array isi 1 item, misal: {"replyLines": ["Gak ada unit Late Arrival hari ini bro."], "attachedUnits": []}`;
 
   // Groq pakai format OpenAI-compatible: role "user"/"assistant" langsung, isi di field "content"
+  // (content bisa string biasa, ATAU array [{type:"text",...},{type:"image_url",...}] kalau ada gambar)
   const messagesForApi = chatHistory.map(m => ({
     role: m.role === "assistant" ? "assistant" : "user",
     content: m.content
   }));
+  const requestHasImage = chatHistory.some(m => m.hasImage);
 
   try{
     // Panggil lewat Netlify Function proxy (bukan langsung ke Groq) supaya
     // API key gak pernah ke-expose di browser. Lihat netlify/functions/groq-proxy.js
+    // PENTING: model default (openai/gpt-oss-120b) itu TEXT-ONLY, gak bisa "lihat"
+    // gambar. Kirim flag "vision:true" + "model" pilihan kalau ada gambar terlampir
+    // — tapi groq-proxy.js WAJIB diupdate juga di sisi server biar dia mau nerima override
+    // "model" ini (kalau belum, proxy akan tetep pakai model default & abaikan gambar).
+    const requestBody = {
+      max_tokens:2000,
+      system: systemPrompt,
+      messages: messagesForApi
+    };
+    if (requestHasImage){
+      requestBody.model = "meta-llama/llama-4-scout-17b-16e-instruct"; // vision-capable di Groq
+      requestBody.vision = true;
+    }
     const response = await fetch("/.netlify/functions/groq-proxy", {
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({
-        max_tokens:2000,
-        system: systemPrompt,
-        messages: messagesForApi
-      })
+      body: JSON.stringify(requestBody)
     });
     const rawText = await response.text();
     let data;
@@ -551,12 +603,48 @@ Contoh buat jawaban singkat 1 baris, "replyLines" tetap array isi 1 item, misal:
 
 document.getElementById("refreshBtn").addEventListener("click", loadData);
 
+// ===== Attach gambar via paste (Ctrl+V) =====
+let pendingImageDataUrl = null;
+
+function setPendingImage(dataUrl){
+  pendingImageDataUrl = dataUrl;
+  const row = document.getElementById("imgPreviewRow");
+  const thumb = document.getElementById("imgPreviewThumb");
+  thumb.src = dataUrl;
+  row.classList.add("show");
+}
+function clearPendingImage(){
+  pendingImageDataUrl = null;
+  const row = document.getElementById("imgPreviewRow");
+  row.classList.remove("show");
+  document.getElementById("imgPreviewThumb").src = "";
+}
+function handlePasteEvent(e){
+  const items = (e.clipboardData || e.originalEvent && e.originalEvent.clipboardData || {}).items;
+  if (!items) return;
+  for (const item of items){
+    if (item.type && item.type.indexOf("image") !== -1){
+      const file = item.getAsFile();
+      if (!file) continue;
+      const reader = new FileReader();
+      reader.onload = (ev) => setPendingImage(ev.target.result);
+      reader.readAsDataURL(file);
+      e.preventDefault();
+      break;
+    }
+  }
+}
+document.getElementById("chatInput").addEventListener("paste", handlePasteEvent);
+document.getElementById("removeImgBtn").addEventListener("click", clearPendingImage);
+
 document.getElementById("sendBtn").addEventListener("click", () => {
   const input = document.getElementById("chatInput");
   const q = input.value.trim();
-  if (!q) return;
+  if (!q && !pendingImageDataUrl) return; // minimal harus ada teks ATAU gambar
   input.value = "";
-  askAgent(q);
+  const img = pendingImageDataUrl;
+  clearPendingImage();
+  askAgent(q, img);
 });
 document.getElementById("chatInput").addEventListener("keydown", (e) => {
   if (e.key === "Enter") document.getElementById("sendBtn").click();
