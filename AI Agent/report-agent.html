@@ -210,6 +210,17 @@ function computeStatus(t){
   return { statusText, etaDateObj };
 }
 
+// Format tanggal pakai KOMPONEN WAKTU LOKAL (WIB) — SAMA PERSIS kayak
+// formatDateYYYYMMDD() di inbound.html. JANGAN pakai .toISOString().slice(0,10)
+// buat ambil tanggal, karena toISOString() itu UTC: trip yang ATD Origin-nya
+// jam 00:00-06:59 pagi WIB bakal "mundur" ke tanggal UTC sebelumnya (H-1),
+// jadi gak match sama kolom "Tanggal" di dashboard Inbound yang pakai local time.
+// Ini yang bikin AI Agent salah nyortir trip pas ditanya "hari ini".
+function formatDateYYYYMMDDLocal(d){
+  const pad = n => String(n).padStart(2,"0");
+  return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate());
+}
+
 function normalizeTrip(t){
   const { statusText, etaDateObj } = computeStatus(t);
   const dateSourceRaw = t.atdOrigin || t.stdOrigin;
@@ -227,7 +238,7 @@ function normalizeTrip(t){
     atdOrigin: t.atdOrigin || null,
     ataDest: t.ataDest || null,
     etaDest: etaDateObj ? etaDateObj.toISOString() : null,
-    tanggal: dateSource && !isNaN(dateSource) ? dateSource.toISOString().slice(0,10) : null,
+    tanggal: dateSource && !isNaN(dateSource) ? formatDateYYYYMMDDLocal(dateSource) : null,
     status: statusText
   };
 }
