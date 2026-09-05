@@ -51,7 +51,7 @@ exports.handler = async function (event) {
     };
   }
 
-  const { system, contents, max_tokens } = payload;
+  const { system, contents, max_tokens, thinking_level } = payload;
 
   if (!contents || !Array.isArray(contents)) {
     return {
@@ -60,18 +60,18 @@ exports.handler = async function (event) {
     };
   }
 
+  // Frontend boleh minta level thinking lebih tinggi buat task yang butuh AI
+  // teliti (misal nyisir JSON data satu-satu) lewat field "thinking_level"
+  // ("minimal"/"low"/"medium"/"high"). Default "minimal" kalau gak dikirim,
+  // biar obrolan ringan tetep hemat token/latency.
+  const allowedThinkingLevels = ["minimal", "low", "medium", "high"];
+  const thinkingLevel = allowedThinkingLevels.includes(thinking_level) ? thinking_level : "minimal";
+
   const geminiBody = {
     contents: contents,
     generationConfig: {
       maxOutputTokens: max_tokens || 1000,
-      // Gemini 3.6 Flash defaultnya "thinking" NYALA, dan token buat mikir itu
-      // ikut motong jatah maxOutputTokens yang sama (dihitung sebagai output).
-      // Buat proxy ini kita cuma butuh jawaban JSON ketat, bukan reasoning
-      // panjang. PENTING: model 3.6 pakai "thinkingLevel" (enum), BUKAN
-      // "thinkingBudget" (itu parameter lama buat Gemini 2.5) — kalau salah
-      // kirim thinkingBudget, request-nya malah DITOLAK 400 INVALID_ARGUMENT
-      // di beberapa versi API, bikin SEMUA pertanyaan gagal (bukan cuma yang panjang).
-      thinkingConfig: { thinkingLevel: "minimal" }
+      thinkingConfig: { thinkingLevel: thinkingLevel }
     }
   };
   if (system) {
