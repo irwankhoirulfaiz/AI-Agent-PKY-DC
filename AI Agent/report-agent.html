@@ -424,12 +424,12 @@ Late/Early Arrival Issue's
 (tulis tanggal yang relevan di sini, format DD/MM/YYYY)
 <baris kosong>
 1. LT Number : (isi tripNum)
-          Vendor : (isi vendorName)
-          Driver : (isi driver)
-          Qty Parcel : (isi qtyParcelVal)
-          STA : (isi staDest, format jam di atas)
-          ATA : (isi ataDest, format jam di atas — kalau belum ada tulis "-")
-          Travel Time : (isi durasi tempuh, format "Xh Ym")
+    Vendor : (isi vendorName)
+    Driver : (isi driver)
+    Qty Parcel : (isi qtyParcelVal)
+    STA : (isi staDest, format jam di atas)
+    ATA : (isi ataDest, format jam di atas — kalau belum ada tulis "-")
+    Travel Time : (isi durasi tempuh, format "Xh Ym")
 <baris kosong>
 2. LT Number : ...dst, angka urut lanjut buat tiap trip berikutnya, dengan struktur field yang SAMA PERSIS.
 
@@ -480,25 +480,54 @@ Contoh buat jawaban singkat 1 baris, "replyLines" tetap array isi 1 item, misal:
     let text = choice && choice.message && choice.message.content
       ? String(choice.message.content).trim()
       : "";
-    text = text.replace(/^```json/i,"").replace(/^```/,"").replace(/```$/,"").trim();
+    // Bersihin code fence di mana pun posisinya (bukan cuma di awal/akhir persis)
+    text = text.replace(/```json/gi, "").replace(/```/g, "").trim();
+
+    // Ambil substring dari kurung kurawal PERTAMA sampai kurung kurawal
+    // TERAKHIR — jadi kalau AI masih nyelipin kalimat pembuka/penutup di luar
+    // JSON (padahal udah dilarang), itu gak bikin JSON.parse langsung gagal.
+    const firstBrace = text.indexOf("{");
+    const lastBrace = text.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace > firstBrace){
+      text = text.slice(firstBrace, lastBrace + 1);
+    }
 
     // Coba parse langsung dulu. Kalau AI-nya (Groq) masih ngasal — misal nulis
-    // enter/tab literal, atau over-escape jadi "\\n" dobel — di dalam string JSON,
-    // JSON.parse bisa gagal atau kebaca aneh. Sebelumnya ini bikin mentahan JSON
-    // ke-tampil ke chat. Sekarang kalau parse pertama gagal, coba beberapa cara
-    // perbaikan berurutan sebelum nyerah ke fallback raw text.
+    // enter/tab literal, over-escape jadi "\\n" dobel, pakai tanda kutip
+    // "pintar" (smart quotes), atau nyisain trailing comma — di dalam string
+    // JSON, JSON.parse bisa gagal atau kebaca aneh. Sebelumnya ini bikin
+    // mentahan JSON ke-tampil ke chat. Sekarang kalau parse pertama gagal,
+    // coba beberapa cara perbaikan berurutan sebelum nyerah ke fallback.
     let parsed;
     let ok = false;
     const attempts = [
       text,
       text.replace(/\r\n|\r|\n/g, "\\n").replace(/\t/g, "\\t"), // newline/tab literal -> escaped
-      text.replace(/\\\\n/g, "\\n").replace(/\\\\t/g, "\\t")     // over-escaped \\n -> \n
+      text.replace(/\\\\n/g, "\\n").replace(/\\\\t/g, "\\t"),    // over-escaped \\n -> \n
+      text.replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"'), // smart quotes -> lurus
+      text.replace(/,\s*([\]}])/g, "$1")                         // hapus trailing comma sebelum ] / }
     ];
     for (const candidate of attempts){
       try{ parsed = JSON.parse(candidate); ok = true; break; }
       catch(e){ /* coba kandidat berikutnya */ }
     }
-    if (!ok) parsed = { replyLines: [text], attachedUnits: [] };
+
+    // Last resort kalau SEMUA percobaan JSON.parse tetep gagal: jangan lempar
+    // mentahan JSON ke chat kayak sebelumnya — tarik isi array "replyLines"
+    // pakai regex biar user tetap dapet teks yang bisa dibaca manusia.
+    if (!ok){
+      const linesMatch = text.match(/"replyLines"\s*:\s*\[([\s\S]*?)\]\s*,\s*"attachedUnits"/);
+      if (linesMatch){
+        const items = [];
+        const itemRegex = /"((?:[^"\\]|\\.)*)"/g;
+        let m;
+        while ((m = itemRegex.exec(linesMatch[1])) !== null){
+          items.push(m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"'));
+        }
+        if (items.length){ parsed = { replyLines: items, attachedUnits: [] }; ok = true; }
+      }
+    }
+    if (!ok) parsed = { replyLines: ["Waduh, format balasan AI-nya berantakan bro, coba tanya ulang sekali lagi ya."], attachedUnits: [] };
 
     // Susun teks final dari array replyLines (baris baru beneran, bukan hasil
     // escape dari AI) — kalau AI masih pakai format lama "reply" (string biasa),
