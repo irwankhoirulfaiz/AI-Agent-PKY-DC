@@ -366,19 +366,40 @@ atdOrigin ke ataDest lebih dari 6.5 jam (atau ETA 6.5 jam dari atdOrigin udah le
 "Early Arrived" = durasi tempuh kurang dari 6 jam. "On Time" = 6-6.5 jam. "In Transit" = masih di jalan,
 ETA belum lewat.
 
-Format WAJIB buat semua jam/tanggal yang kamu tulis di "reply" (STA, ETA, waktu berangkat/tiba, dll):
+Format WAJIB buat semua jam/tanggal yang kamu tulis (STA, ETA, waktu berangkat/tiba, dll):
 tulis dalam format "DD/MM HH:mm WIB" yang gampang dibaca manusia (contoh: "05/09 07:30 WIB"), AMBIL DARI
 JAM LOKAL field ISO yang ada (abaikan huruf "T" dan "Z" serta angka detik/milidetik-nya, itu cuma format
-teknis, JANGAN pernah ditulis mentah-mentah ke user). Kalau user minta bikin "Report" atau laporan formal,
-tulis dalam format teks polos, TANPA tanda bintang (*) atau simbol markdown apa pun, pakai penomoran biasa
-(1. 2. 3.) atau garis strip (-) kalau perlu list.
+teknis, JANGAN pernah ditulis mentah-mentah ke user).
+
+TEMPLATE WAJIB kalau user minta "Report" / "Laporan" Late Arrival dan/atau Early Arrival (ikuti PERSIS,
+teks polos TANPA tanda bintang atau simbol markdown apa pun, tiap baris di bawah = 1 item terpisah di
+array "replyLines"):
+
+Late/Early Arrival Issue's
+(tulis tanggal yang relevan di sini, format DD/MM/YYYY)
+<baris kosong>
+1. LT Number : (isi tripNum)
+    Vendor : (isi vendorName)
+    Driver : (isi driver)
+    Qty Parcel : (isi qtyParcelVal)
+    STA : (isi staDest, format jam di atas)
+    ATA : (isi ataDest, format jam di atas — kalau belum ada tulis "-")
+    Travel Time : (isi durasi tempuh, format "Xh Ym")
+<baris kosong>
+2. LT Number : ...dst, angka urut lanjut buat tiap trip berikutnya, dengan struktur field yang SAMA PERSIS.
+
+Kalau user minta gabungan Late Arrival DAN Early Arrival, urutin Late Arrival dulu semua baru Early
+Arrived, atau kalau user cuma minta salah satu ya isi yang diminta aja. Kalau gak ada unit yang match,
+jangan pakai template ini — jawab santai aja bilang gak ada.
 
 Data trip tercatat, total ${currentTrips.length} trip, dengan ${lateCount} di antaranya berstatus
 "Late Arrival" (JSON):
 ${JSON.stringify(currentTrips, null, 2)}
 
 WAJIB balas HANYA dengan JSON valid, tanpa teks lain di luar JSON, tanpa markdown code fence, persis format ini:
-{"replyLines": ["baris pertama jawaban", "baris kedua kalau ada", "dst — tiap item array = satu baris teks, JANGAN pernah taruh karakter enter/newline literal ATAU escape \\n di DALAM satu item, kalau butuh baris baru bikin item array baru"], "attachedUnits": [ /* array trip object dari data di atas yang relevan sama pertanyaan, kosongkan [] kalau gak relevan/gak ada */ ]}
+{"replyLines": ["baris pertama jawaban", "baris kedua kalau ada", "dst — tiap item array = satu baris teks (boleh diawali spasi buat indentasi field kayak di template), JANGAN pernah taruh karakter enter/newline literal ATAU escape \\n di DALAM satu item, kalau butuh baris baru/baris kosong bikin item array baru (baris kosong = string kosong \"\")"], "attachedUnits": [ /* array trip object dari data di atas yang relevan sama pertanyaan, kosongkan [] kalau gak relevan/gak ada */ ]}
+
+
 
 Contoh buat jawaban singkat 1 baris, "replyLines" tetap array isi 1 item, misal: {"replyLines": ["Gak ada unit Late Arrival hari ini bro."], "attachedUnits": []}`;
 
