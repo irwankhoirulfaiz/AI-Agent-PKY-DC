@@ -408,7 +408,7 @@ function addTyping(){
   const el = document.createElement("div");
   el.className = "msg agent";
   el.id = "typingIndicator";
-  el.innerHTML = '<div class="who">Odyssey</div><div class="typing-dots"><span></span><span></span><span></span></div>';
+  el.innerHTML = '<div class="who">AI Agent</div><div class="typing-dots"><span></span><span></span><span></span></div>';
   log.appendChild(el);
   log.scrollTop = log.scrollHeight;
 }
@@ -466,9 +466,40 @@ async function askAgent(question, imageDataUrl){
 
   const lateCount = currentTrips.filter(t => t.status === "Late Arrival").length;
 
-  const systemPrompt = `Kamu AI Agent buat Shift Lead Sortation Center. Kamu jawab pertanyaan soal data
-Inbound (trip Line Haul dari origin ke DC), gaya santai kayak ngobrol sama rekan kerja sendiri (natural,
-boleh pakai "bro", gak kaku/formal).
+  // Deteksi simpel: pertanyaan ini soal DATA TRIP (report/status/vendor/dll) atau
+  // cuma obrolan santai yang gak butuh data? Kalau cuma basa-basi ("bro", "makasih",
+  // "lu tau gua?"), JANGAN kirim seluruh dump data + template Report yang berat —
+  // itu yang bikin AI keder/salah format DAN boros token (gampang kepentok limit).
+  // Data & template berat cuma dikirim kalau emang relevan.
+  const dataKeywords = /report|laporan|trip|late|telat|awal|early|unit|vendor|driver|status|hari ini|kemarin|tanggal|durasi|jadwal|\bsta\b|\beta\b|\bata\b|\bstd\b|\blt[\s-]?\d|nomor|plat|parcel|qty|data|dc\b|banjarmasin|sampit|kapuas|pangkalan/i;
+  const isDataQuery = dataKeywords.test(question || "") || !!imageDataUrl;
+
+  const basePersona = `Kamu Odyssey, AI Agent buat Shift Lead Sortation Center yang mantau trip Inbound
+(Line Haul dari origin ke DC). Gaya ngomong santai kayak ngobrol sama rekan kerja sendiri (natural,
+boleh pakai "bro", boleh bercanda dikit, gak kaku/formal) — tapi tetep sopan.`;
+
+  const jsonFormatRule = `WAJIB balas HANYA dengan JSON valid, tanpa teks lain di luar JSON, tanpa markdown
+code fence, persis format ini:
+{"replyLines": ["baris pertama jawaban", "baris kedua kalau ada, dst — tiap item array = satu baris teks,
+JANGAN pernah taruh karakter enter/newline literal ATAU escape \\n di DALAM satu item, kalau butuh baris
+baru bikin item array baru"], "attachedUnits": []}`;
+
+  let systemPrompt;
+  if (!isDataQuery){
+    // Mode RINGAN — obrolan santai, gak nyangkut data trip. Prompt sengaja dibikin
+    // pendek biar AI-nya fokus mikirin jawaban natural, bukan sibuk ngurusin format
+    // laporan yang gak relevan sama sekali.
+    systemPrompt = `${basePersona}
+
+User lagi ngobrol santai / nanya hal di luar data trip. Jawab natural aja sesuai konteks obrolan.
+
+${jsonFormatRule}
+
+Contoh: {"replyLines": ["Wih nanya gitu bro 😄"], "attachedUnits": []}`;
+  } else {
+    // Mode LENGKAP — pertanyaan soal data trip / minta report, baru kirim semua
+    // instruksi detail + dump data JSON-nya.
+    systemPrompt = `${basePersona}
 
 Data di bawah mencakup SEMUA tanggal yang ada (gak difilter otomatis). Tiap trip punya field "tanggal"
 (format YYYY-MM-DD). Kalau user nanya soal "hari ini", "kemarin", atau tanggal tertentu, kamu yang
@@ -515,20 +546,23 @@ Data trip tercatat, total ${currentTrips.length} trip, dengan ${lateCount} di an
 "Late Arrival" (JSON):
 ${JSON.stringify(currentTrips, null, 2)}
 
-WAJIB balas HANYA dengan JSON valid, tanpa teks lain di luar JSON, tanpa markdown code fence, persis format ini:
-{"replyLines": ["baris pertama jawaban", "baris kedua kalau ada", "dst — tiap item array = satu baris teks (boleh diawali spasi buat indentasi field kayak di template), JANGAN pernah taruh karakter enter/newline literal ATAU escape \\n di DALAM satu item, kalau butuh baris baru/baris kosong bikin item array baru (baris kosong = string kosong \"\")"], "attachedUnits": [ /* array trip object dari data di atas yang relevan sama pertanyaan, kosongkan [] kalau gak relevan/gak ada */ ]}
-
-
+${jsonFormatRule}
 
 Contoh buat jawaban singkat 1 baris, "replyLines" tetap array isi 1 item, misal: {"replyLines": ["Gak ada unit Late Arrival hari ini bro."], "attachedUnits": []}`;
+  }
 
   // Groq pakai format OpenAI-compatible: role "user"/"assistant" langsung, isi di field "content"
   // (content bisa string biasa, ATAU array [{type:"text",...},{type:"image_url",...}] kalau ada gambar)
-  const messagesForApi = chatHistory.map(m => ({
+  // Batasin cuma N pesan TERAKHIR yang dikirim ulang ke API (bukan seluruh riwayat
+  // dari awal sesi) — biar prompt gak numpuk makin panjang makin berat tiap turn,
+  // yang bikin token per-request membengkak & gampang kena limit di percakapan panjang.
+  const HISTORY_LIMIT = 12;
+  const recentHistory = chatHistory.slice(-HISTORY_LIMIT);
+  const messagesForApi = recentHistory.map(m => ({
     role: m.role === "assistant" ? "assistant" : "user",
     content: m.content
   }));
-  const requestHasImage = chatHistory.some(m => m.hasImage);
+  const requestHasImage = recentHistory.some(m => m.hasImage);
 
   try{
     // Panggil lewat Netlify Function proxy (bukan langsung ke Groq) supaya
@@ -540,7 +574,7 @@ Contoh buat jawaban singkat 1 baris, "replyLines" tetap array isi 1 item, misal:
     // cek daftar model vision terbaru di console.groq.com/docs/vision dan ganti
     // string model di bawah ini.
     const requestBody = {
-      max_tokens:2000,
+      max_tokens: isDataQuery ? 2000 : 400, // obrolan santai gak butuh budget token segede report
       system: systemPrompt,
       messages: messagesForApi
     };
