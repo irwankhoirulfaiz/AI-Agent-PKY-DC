@@ -377,9 +377,10 @@ Data trip tercatat, total ${currentTrips.length} trip, dengan ${lateCount} di an
 "Late Arrival" (JSON):
 ${JSON.stringify(currentTrips, null, 2)}
 
-WAJIB balas HANYA dengan JSON valid dalam SATU BARIS (single line, tanpa line break beneran di dalamnya),
-tanpa teks lain di luar JSON, tanpa markdown code fence, persis format ini:
-{"reply": "jawaban di sini, kalau butuh ganti baris WAJIB pakai karakter escape \\n (bukan enter beneran)", "attachedUnits": [ /* array trip object dari data di atas yang relevan sama pertanyaan, kosongkan [] kalau gak relevan/gak ada */ ]}`;
+WAJIB balas HANYA dengan JSON valid, tanpa teks lain di luar JSON, tanpa markdown code fence, persis format ini:
+{"replyLines": ["baris pertama jawaban", "baris kedua kalau ada", "dst — tiap item array = satu baris teks, JANGAN pernah taruh karakter enter/newline literal ATAU escape \\n di DALAM satu item, kalau butuh baris baru bikin item array baru"], "attachedUnits": [ /* array trip object dari data di atas yang relevan sama pertanyaan, kosongkan [] kalau gak relevan/gak ada */ ]}
+
+Contoh buat jawaban singkat 1 baris, "replyLines" tetap array isi 1 item, misal: {"replyLines": ["Gak ada unit Late Arrival hari ini bro."], "attachedUnits": []}`;
 
   // Groq pakai format OpenAI-compatible: role "user"/"assistant" langsung, isi di field "content"
   const messagesForApi = chatHistory.map(m => ({
@@ -415,27 +416,37 @@ tanpa teks lain di luar JSON, tanpa markdown code fence, persis format ini:
       : "";
     text = text.replace(/^```json/i,"").replace(/^```/,"").replace(/```$/,"").trim();
 
-    // Coba parse langsung dulu. Kalau AI-nya lupa escape enter/tab jadi \n \t (jadi
-    // ngasih newline BENERAN di dalam string JSON), JSON.parse bakal gagal total dan
-    // sebelumnya fallback-nya nampilin mentahan JSON ke chat (itu bug yang bikin
-    // tampilan berantakan). Sekarang kalau parse pertama gagal, coba benerin dulu:
-    // escape semua newline/tab literal jadi \n \t baru parse ulang, baru kalau masih
-    // gagal juga fallback ke raw text.
+    // Coba parse langsung dulu. Kalau AI-nya (Groq) masih ngasal — misal nulis
+    // enter/tab literal, atau over-escape jadi "\\n" dobel — di dalam string JSON,
+    // JSON.parse bisa gagal atau kebaca aneh. Sebelumnya ini bikin mentahan JSON
+    // ke-tampil ke chat. Sekarang kalau parse pertama gagal, coba beberapa cara
+    // perbaikan berurutan sebelum nyerah ke fallback raw text.
     let parsed;
-    try{
-      parsed = JSON.parse(text);
-    }catch(e1){
-      try{
-        const repaired = text.replace(/\r\n|\r|\n/g, "\\n").replace(/\t/g, "\\t");
-        parsed = JSON.parse(repaired);
-      }catch(e2){
-        parsed = { reply: text, attachedUnits: [] };
-      }
+    let ok = false;
+    const attempts = [
+      text,
+      text.replace(/\r\n|\r|\n/g, "\\n").replace(/\t/g, "\\t"), // newline/tab literal -> escaped
+      text.replace(/\\\\n/g, "\\n").replace(/\\\\t/g, "\\t")     // over-escaped \\n -> \n
+    ];
+    for (const candidate of attempts){
+      try{ parsed = JSON.parse(candidate); ok = true; break; }
+      catch(e){ /* coba kandidat berikutnya */ }
+    }
+    if (!ok) parsed = { replyLines: [text], attachedUnits: [] };
+
+    // Susun teks final dari array replyLines (baris baru beneran, bukan hasil
+    // escape dari AI) — kalau AI masih pakai format lama "reply" (string biasa),
+    // tetap didukung biar gak putus kompatibilitas.
+    let replyText = "...";
+    if (Array.isArray(parsed.replyLines)){
+      replyText = parsed.replyLines.map(l => String(l)).join("\n");
+    } else if (typeof parsed.reply === "string"){
+      replyText = parsed.reply;
     }
 
     removeTyping();
-    addMessage("agent", parsed.reply || "...", parsed.attachedUnits);
-    chatHistory.push({role:"assistant", content: parsed.reply || ""});
+    addMessage("agent", replyText, parsed.attachedUnits);
+    chatHistory.push({role:"assistant", content: replyText});
   }catch(e){
     console.error(e);
     removeTyping();
